@@ -1,0 +1,1531 @@
+/* ============================================
+   CONFIGURACIÓN GLOBAL
+   ============================================ */
+const CONFIG = {
+  // Nombres de hojas
+  HOJAS: {
+    SOLICITUDES: 'Solicitudes2026',
+  },
+  
+  // Columnas (índices base 1 para getRange)
+  COLUMNAS: {
+    LINEA_CREDITO: 1,        // A
+    CHECKBOX: 32,            // AE
+    FECHA_VALIDACION: 33,    // AF
+    COLOR_INDICADOR: 3,      // C
+    PRIMER_PAGO: 36,         // AI
+    ULTIMO_PAGO: 37,         // AJ
+    INFO_RELEVANTE_I: 9,     // I (columna 9)
+    INFO_RELEVANTE_G: 7,     // G (columna 7)
+    INFO_RELEVANTE_J: 10
+  },
+  
+  // Índices base 0 para arrays
+  INDICES: {
+    LINEA_CREDITO: 0,        // A
+    PRIMER_PAGO: 35,         // AI
+    ULTIMO_PAGO: 36,         // AJ
+    INFO_RELEVANTE_I: 8,     // I
+    INFO_RELEVANTE_G: 6,     // G
+    INFO_RELEVANTE_J: 9,
+  },
+  
+  // Cache
+  CACHE: {
+    KEY_LINEAS: 'LINEAS_UNICAS_25',
+    DURACION_SEG: 1800, // 30 minutos
+  },
+  
+  // UI
+  UI: {
+    SIDEBAR_WIDTH: 400,
+    MODAL_WIDTH: 900,
+    MODAL_HEIGHT: 700,
+    MAX_SUGERENCIAS: 50,
+  },
+};
+
+/* ============================================
+   CONFIGURACIÓN DE COLORES DINÁMICOS
+   ============================================ */
+const COLORES_DINAMICOS = {
+  "Tipo Credito": {
+     "keywords_simple": ["simple"],
+    "color_simple": {
+      gradiente: 'linear-gradient(135deg, #00b4d8 0%, #0077b6 100%)',
+      clase: 'tipo-credito-simple'
+    },
+    "default": {  // Para "Cuenta Corriente" y "Revolvente"
+      gradiente: 'linear-gradient(135deg, #ff6b6b 0%, #c92a2a 100%)',
+      clase: 'tipo-credito-otros'
+    }
+  }
+  // Puedes agregar más campos dinámicos aquí
+};
+
+/* ============================================
+   FUNCIÓN PARA OBTENER CLASE DINÁMICA
+   ============================================ */
+function obtenerClaseDinamica(nombreCampo, valorCampo) {
+  if (!COLORES_DINAMICOS[nombreCampo]) return null;
+  
+  const config = COLORES_DINAMICOS[nombreCampo];
+  const valorNormalizado = String(valorCampo || '')
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, ""); // Elimina acentos
+  
+  // Verificar si contiene alguna palabra clave de "simple"
+  if (config["keywords_simple"]) {
+    const contieneSimple = config["keywords_simple"].some(keyword => 
+      valorNormalizado.includes(keyword.toLowerCase())
+    );
+    
+    if (contieneSimple && config["color_simple"]) {
+      return config["color_simple"].clase;
+    }
+  }
+  
+  // Si no hay coincidencia, usar default
+  if (config["default"]) {
+    return config["default"].clase;
+  }
+  
+  return null;
+}
+
+/* ============================================
+   CONFIGURACIÓN DE GRUPOS Y CAMPOS
+   ============================================ */
+const MAPEO_CAMPOS = {
+  "Datos del Cliente": {
+    icono: 'person_outline',
+    claseTarjeta: 'bg-cliente',
+    campos: [
+      "Cliente",
+      "Estatus",
+      "Régimen Fiscal",
+      "Producto contratado",
+      "Tipo Credito",
+      "Formalizacion"
+    ]
+  },
+  
+  "Datos de la Solicitud": {
+    icono: 'assignment',
+    claseTarjeta: 'bg-solicitud',
+    campos: [
+      "Fecha de Solicitud",
+      "Monto",
+      "$",
+      "Cantidad Letra",
+      "Tasa",
+      "Plazo",
+      "Fecha de corte",
+      "Fecha Firma",
+      "Fecha Vencimiento LC",
+      "Fecha Vencimiento",
+      "Vencimiento LC",
+      "Observaciones MC"
+    ]
+  }
+};
+
+// Formatos para campos específicos
+const FORMATOS_CAMPOS = {
+  "Monto": (valor) => {
+    const n = Number(valor);
+    return isNaN(n) ? (valor ?? 'N/A') : n.toLocaleString('es-MX', {
+      style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+  },
+  
+  "Fecha de Solicitud": (valor) => formatoFechaLarga(valor),
+  "Fecha Firma": (valor) => formatoFechaLarga(valor),
+  "Fecha Vencimiento LC": (valor) => formatoFechaLarga(valor),
+  "Fecha Vencimiento": (valor) => formatoFechaLarga(valor),
+  
+  "Fecha de corte": (valor) => {
+    if (!valor) return 'N/A';
+    let texto = String(valor).replace(/c\/m/gi, 'Cada Mes');
+    return texto;
+  },
+  
+  "Tasa": (valor) => {
+    const n = Number(valor);
+    return isNaN(n) ? (valor ?? 'N/A') : (n * 100).toFixed(2) + '%';
+  }
+};
+
+/* ============================================
+   FUNCIONES DE FORMATO
+   ============================================ */
+function formatoFechaLarga(valor) {
+  if (!valor) return 'No especificada';
+
+  const meses = ['enero','febrero','marzo','abril','mayo','junio',
+                 'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  
+  const str = String(valor).trim();
+  
+  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const dia = parseInt(m[1], 10);
+    const mes = parseInt(m[2], 10) - 1;
+    const año = m[3];
+    if (mes >= 0 && mes <= 11) return `${dia} de ${meses[mes]} de ${año}`;
+  }
+
+  return str; // si no matchea, mostrar tal cual
+}
+
+function parsearFecha(valor) {
+  if (!valor) return null;
+
+  if (Object.prototype.toString.call(valor) === '[object Date]' && !isNaN(valor)) {
+    return valor;
+  }
+
+  // dd/mm/aaaa o dd-mm-aaaa
+  const matchDMY = String(valor).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (matchDMY) {
+    const dia = parseInt(matchDMY[1], 10);
+    const mes = parseInt(matchDMY[2], 10) - 1;
+    const año = parseInt(matchDMY[3], 10);
+    return new Date(año, mes, dia);
+  }
+
+  // 2-ene-2025 / 02 ene 2025
+  const mesesCortos = { ene:0, feb:1, mar:2, abr:3, may:4, jun:5, jul:6, ago:7, sep:8, oct:9, nov:10, dic:11 };
+  const matchTxt = String(valor).toLowerCase().match(/^(\d{1,2})[-\s](\w{3})[-\s](\d{4})$/);
+  if (matchTxt) {
+    const dia = parseInt(matchTxt[1], 10);
+    const mes = mesesCortos[matchTxt[2]];
+    const año = parseInt(matchTxt[3], 10);
+    if (mes !== undefined) return new Date(año, mes, dia);
+  }
+
+ return null;
+}
+
+/* ============================================
+   SIDEBAR: Buscador de Líneas
+   ============================================ */
+function mostrarSidebarLineas() {
+  const lineas = obtenerLineasUnicas();
+
+  const html = HtmlService.createHtmlOutput(`
+  <!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <style>
+          :root{
+        /* Comic */
+        --comic-black:#000; --comic-yellow:#FFD700; --comic-white:#fff;
+        --comic-shadow: 4px 4px 0 var(--comic-black);
+        --comic-border: 2.5px solid var(--comic-black);
+        --comic-radius:10px;
+        --comic-yellow-light: #FFF9C4;
+            --comic-yellow-dark: #FFC400;
+            --comic-white: #FFFFFF;
+            --comic-shadow: 5px 5px 0 var(--comic-black);
+            --comic-border: 3px solid var(--comic-black);
+            --comic-radius: 8px;
+            --transition: all 0.3s ease;
+
+        /* UI */
+        --primary:#4a6bff; --primary-light:#eef1ff; --primary-dark:#3a56cc;
+        --text-dark:#2d3436; --text-medium:#636e72; --text-light:#b2bec3;
+        --bg:#f7f8fb; --card:#fff; --border:#e8ecef;
+        --radius:12px;
+        --shadow:0 8px 16px rgba(0,0,0,.06);
+        --transition: all .25s cubic-bezier(.645,.045,.355,1);
+      }
+
+      *{box-sizing:border-box} 
+      html,body{height:100%}
+      body{
+        margin:0; padding:12px; background:var(--bg); color:var(--text-dark);
+        font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      }
+
+      /* Layout de sidebar (estrecho y alto con scroll) */
+      .sidebar{
+        width:100%; max-width:480px; 
+        margin:0 auto;
+        height: 100dvh;
+        display:flex; flex-direction:column; gap:12px;
+      }
+      .scroll{
+        overflow:auto; padding-right:2px; /* evita "salto" por scroll */
+      }
+
+      /* Tarjeta estilo cómic */
+      .comic-card{
+        background:var(--card); border:var(--comic-border); border-radius:var(--comic-radius);
+        box-shadow:var(--comic-shadow); padding:16px; position:relative; overflow:visible;
+      }
+      .comic-card::after{
+        content:""; position:absolute; top:0; right:0; width:0; height:0; z-index:1;
+        border-style:solid; border-width:0 28px 28px 0; border-color:transparent var(--comic-yellow) transparent transparent;
+      }
+      .comic-header{
+        display:flex; gap:12px; align-items:center; margin-bottom:12px;
+        padding-bottom:10px; border-bottom:2px dashed var(--comic-black);
+      }
+      .comic-title-icon{
+        width:65px; height:65px; background:var(--comic-yellow); padding:6px; border-radius:50%;
+        border:var(--comic-border); box-shadow:var(--comic-shadow); display:grid; place-items:center; flex:0 0 auto;
+      }
+      .comic-title-icon img{width:110%; height:auto; filter:contrast(1.2) brightness(.9)}
+      .header-text h2{
+        font-family:'Bangers',cursive; letter-spacing:.5px; margin:0 0 2px 0;
+        font-size:22px; color:var(--comic-black);
+      }
+   
+
+      /* Formulario */
+      .form-group{margin-bottom:12px; position:relative;}
+      .form-group label{
+        display:block; margin:0 0 15px 0; font-size:12px; font-weight:600; color:var(--comic-black);
+        text-transform:uppercase; letter-spacing:.4px;
+        background-color: var(--comic-yellow);
+        padding:6px 10px;              
+  border:1.5px solid #000;       
+  border-radius:6px;             
+      }
+      .input-wrapper input[type="date"]{
+        font-size: 16px;   
+        line-height: 1.2;
+        padding-top: 12px; 
+        padding-bottom: 12px;
+            }
+      .input-wrapper{position:relative}
+      input,select{
+        width:100%; font-size:14px; font-weight:500;
+        background:var(--card); border:1px solid var(--border); border-radius:10px;
+        padding:12px 12px 12px 40px; transition:var(--transition);
+      }
+      input:focus, select:focus{
+         outline: none;
+            box-shadow: 0 0 0 3px var(--comic-yellow), inset 3px 3px 0 rgba(0, 0, 0, 0.1);
+            transform: translate(-2px, -2px);
+      }
+      .input-icon{
+        position:absolute; left:12px; top:50%; transform:translateY(-50%);
+        font-size:20px; color:var(--text-light);
+      }
+
+      .btn{
+        width:100%; padding:12px; border:none; border-radius:12px; cursor:pointer; font-weight:700; font-size:14px;
+        background:linear-gradient(135deg,var(--primary),var(--primary-dark)); color:#fff;
+        display:flex; align-items:center; justify-content:center; gap:8px;
+        box-shadow:0 4px 10px rgba(74,107,255,.18); transition:var(--transition);
+      }
+      .btn:hover{transform:translateY(-1.5px); box-shadow:0 6px 14px rgba(74,107,255,.24)}
+      .btn:disabled{opacity:.6; cursor:not-allowed; transform:none; box-shadow:none}
+
+      .loading{display: none;
+            text-align: center;
+            padding: 30px;
+            background-color: var(--comic-white);        
+            margin-top: 20px;}
+      .loading-content{ display: inline-flex;
+            flex-direction: column;
+            align-items: center;}
+      .spinner{
+        width: 50px;
+            height: 50px;
+            border: 4px solid var(--comic-yellow-light);
+            border-top: 4px solid var(--comic-black);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+            box-shadow: inset 0 0 0 2px var(--comic-black);
+      }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+      /* Autocompletado (contenedor no se recorta en sidebar) */
+      .suggestions{
+        position:absolute; inset-inline:0; top:calc(100% + 6px);
+        background:var(--card); border:1px solid var(--border); border-radius:10px;
+        box-shadow:var(--shadow); max-height:220px; overflow:auto; z-index:9999; display:none; list-style:none; padding:6px 0; margin:0;
+      }
+      .suggestions li{padding:8px 12px; cursor:pointer; user-select:none}
+      .suggestions li:hover{background:var(--primary-light); color:var(--primary-dark)}
+
+      /* Contenedor de selector de fila */
+      #filaSelectContainer{display:none}
+      
+      /* Ajustes finos móviles */
+      @media (max-width:420px){
+        .header-text h2{font-size:20px}
+        .comic-title-icon{width:40px;height:40px}
+      }
+         </style>
+  </head>
+  <body>
+    <div class="sidebar">
+      <div class="comic-card scroll">
+        <div class="comic-header">
+          <div class="comic-title-icon">
+            <img src="https://img.icons8.com/?size=100&id=63647&format=png&color=000000" alt="Icono">
+          </div>
+          <div class="header-text">
+            <h2>Validación Ministraciones</h2>
+            </div>
+        </div>
+
+          <div class="form-group">
+            <label for="fecha">Fecha de Solicitud</label>
+            <div class="input-wrapper">
+              <i class="material-icons-round input-icon">event</i>
+              <input type="date" id="fecha">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="linea">Línea de Crédito</label>
+            <div class="input-wrapper">
+              <i class="material-icons-round input-icon">list_alt</i>
+              <input id="linea" type="text" placeholder="Escribe una línea" autocomplete="off">
+              <ul id="lineaSuggestions" class="suggestions"></ul>
+            </div>
+          </div>
+
+          <div class="form-group" id="filaSelectContainer" style="display:none;">
+            <label for="filaSelect">Selecciona Fila</label>
+            <div class="input-wrapper">
+              <i class="material-icons-round input-icon">format_list_numbered</i>
+              <select id="filaSelect">
+                <option value="" selected>— Elige una fila —</option>
+              </select>
+            </div>
+          </div>
+
+          <button id="btnVisualizar" class="btn" onclick="visualizar()">
+            <i class="material-icons-round">search</i> Buscar Línea
+          </button>
+     
+
+        <div id="loading" class="loading">
+          <div class="loading-content">
+            <div class="spinner"></div>
+            <p>Buscando información...</p>
+          </div>
+        </div>
+         </div>
+
+        <script>
+          // Fecha de hoy
+          document.getElementById('fecha').valueAsDate = new Date();
+
+          // Inyectamos desde servidor (evita la 1ra llamada asíncrona)
+          var LINEAS_CACHE = ${JSON.stringify(lineas)};
+          var filasEncontradas = [];
+
+          // === Autocompletado ===
+          (function(){
+            var input = document.getElementById('linea');
+            var wrap  = input.parentElement;
+            var list  = document.getElementById('lineaSuggestions');
+            wrap.style.position = 'relative';
+
+            function buildList(items){
+              list.innerHTML = '';
+              items.forEach(function(item){
+                var li = document.createElement('li');
+                li.textContent = item;
+                li.onclick = function(){
+                  input.value = item;
+                  list.style.display = 'none';
+                  input.focus();
+                };
+                list.appendChild(li);
+              });
+              list.style.display = items.length ? 'block' : 'none';
+            }
+
+            function renderSuggestions(q, showTopWhenEmpty){
+              var qn = (q || '').toString().trim().toLowerCase();
+              if (!qn) {
+                if (showTopWhenEmpty && LINEAS_CACHE && LINEAS_CACHE.length) {
+                  buildList(LINEAS_CACHE.slice(0, ${CONFIG.UI.MAX_SUGERENCIAS}));
+                } else {
+                  list.style.display = 'none';
+                }
+                return;
+              }
+              var data = LINEAS_CACHE
+                .filter(function(x){ return String(x).toLowerCase().indexOf(qn) !== -1; })
+                .slice(0, ${CONFIG.UI.MAX_SUGERENCIAS});
+              buildList(data);
+            }
+
+            input.addEventListener('input', function(e){ renderSuggestions(e.target.value, false); });
+            input.addEventListener('focus', function(){ renderSuggestions(input.value, true); });
+            input.addEventListener('keydown', function(e){ if (e.key === 'Escape') list.style.display = 'none'; });
+            document.addEventListener('click', function(e){ if (!wrap.contains(e.target)) list.style.display = 'none'; });
+
+            // Enter → buscar
+            input.addEventListener('keydown', function(e){
+              if (e.key === 'Enter') document.getElementById('btnVisualizar').click();
+            });
+          })();
+
+          // Reset del selector al cambiar filtros
+          function resetSelector() {
+            const cont = document.getElementById('filaSelectContainer');
+            const sel  = document.getElementById('filaSelect');
+            filasEncontradas = [];
+            cont.style.display = 'none';
+            sel.innerHTML = '<option value="" selected>— Elige una fila —</option>';
+            const btn = document.getElementById('btnVisualizar');
+            btn.innerHTML = '<i class="material-icons-round">search</i> Buscar Línea';
+          }
+          document.getElementById('linea').addEventListener('input', resetSelector);
+          document.getElementById('fecha').addEventListener('input', resetSelector);
+
+          // Botón principal
+          function visualizar() {
+            const btn = document.getElementById("btnVisualizar");
+            const loading = document.getElementById("loading");
+            const fecha = document.getElementById('fecha').value;
+            const linea = document.getElementById('linea').value;
+            const cont  = document.getElementById('filaSelectContainer');
+            const sel   = document.getElementById('filaSelect');
+
+            if (!fecha || !linea) {
+              alert('Por favor complete ambos campos para continuar');
+              return;
+            }
+
+            // Si ya hay selector visible y hay fila elegida → abrir modal
+            if (cont.style.display !== 'none' && sel.value) {
+              btn.disabled = true;
+              loading.style.display = 'block';
+              google.script.run
+                .withSuccessHandler(function() {
+                  btn.disabled = false;
+                  loading.style.display = 'none';
+                })
+                .withFailureHandler(function(error) {
+                  btn.disabled = false;
+                  loading.style.display = 'none';
+                  alert('Error al abrir: ' + error.message);
+                })
+                .mostrarDetalleLineaPorRow(Number(sel.value));
+              return;
+            }
+
+            // Buscar filas coincidentes
+            btn.disabled = true;
+            loading.style.display = 'block';
+
+            google.script.run
+              .withSuccessHandler(function(rows) {
+                btn.disabled = false;
+                loading.style.display = 'none';
+
+                if (!rows || rows.length === 0) {
+                  alert('No se encontraron registros para la línea "' + linea + '" con fecha ' + fecha);
+                  return;
+                }
+
+                // 1 resultado → abrir modal directo
+                if (rows.length === 1) {
+                  btn.disabled = true;
+                  loading.style.display = 'block';
+                  google.script.run
+                    .withSuccessHandler(function() {
+                      btn.disabled = false;
+                      loading.style.display = 'none';
+                    })
+                    .withFailureHandler(function(error) {
+                      btn.disabled = false;
+                      loading.style.display = 'none';
+                      alert('Error al abrir: ' + error.message);
+                    })
+                    .mostrarDetalleLineaPorRow(rows[0]);
+                  return;
+                }
+
+                // 2+ resultados → poblar selector
+                const sel = document.getElementById('filaSelect');
+                sel.innerHTML = '<option value="" selected>— Elige una fila —</option>';
+                rows.forEach(function(r){
+                  const opt = document.createElement('option');
+                  opt.value = r;
+                  opt.textContent = 'FILA ' + r;
+                  sel.appendChild(opt);
+                });
+                document.getElementById('filaSelectContainer').style.display = 'block';
+                btn.innerHTML = '<i class="material-icons-round">visibility</i> Ver fila seleccionada';
+              })
+              .withFailureHandler(function(error) {
+                btn.disabled = false;
+                loading.style.display = 'none';
+                alert('Error al buscar: ' + error.message);
+              })
+              .getFilasCoincidentes(linea, fecha);
+          }
+
+          // Exponer función (por seguridad, ya está en global scope del iframe)
+          window.visualizar = visualizar;
+        </script>
+      </body>
+    </html>
+  `).setTitle('🔍 Buscador Avanzado').setWidth(CONFIG.UI.SIDEBAR_WIDTH);
+
+  SpreadsheetApp.getUi().showSidebar(html);
+}
+
+/* ============================================
+   FUNCIONES DE DATOS
+   ============================================ */
+function obtenerLineasUnicas() {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(CONFIG.CACHE.KEY_LINEAS);
+  if (cached) return JSON.parse(cached);
+
+  var hoja = SpreadsheetApp.getActive().getSheetByName(CONFIG.HOJAS.SOLICITUDES);
+  var lastRow = hoja.getLastRow();
+  if (lastRow < 2) return [];
+
+  var datos = hoja.getRange(2, CONFIG.COLUMNAS.LINEA_CREDITO, lastRow - 1, 1).getValues();
+  var set = {};
+  for (var i = 0; i < datos.length; i++) {
+    var v = (datos[i][0] + '').trim();
+    if (v) set[v] = true;
+  }
+  var arr = Object.keys(set).sort();
+  cache.put(CONFIG.CACHE.KEY_LINEAS, JSON.stringify(arr), CONFIG.CACHE.DURACION_SEG);
+  return arr;
+}
+
+function getFilasCoincidentes(linea, fechaISO) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = ss.getSheetByName(CONFIG.HOJAS.SOLICITUDES);
+  var lastRow = hoja.getLastRow();
+  if (lastRow < 2) return [];
+
+  var headers = hoja.getRange(1, 1, 1, hoja.getLastColumn()).getValues()[0];
+  var idxFecha = headers.indexOf("Fecha de Solicitud");
+  if (idxFecha === -1) return [];
+
+  var colLinea = hoja.getRange(2, CONFIG.COLUMNAS.LINEA_CREDITO, lastRow - 1, 1).getValues();
+  var colFecha = hoja.getRange(2, idxFecha + 1, lastRow - 1, 1).getValues();
+
+  function toYMD(d) {
+    var y = d.getFullYear();
+    var m = (d.getMonth() + 1).toString().padStart(2,'0');
+    var da = d.getDate().toString().padStart(2,'0');
+    return y + '-' + m + '-' + da;
+  }
+
+  var targetYMD;
+  try {
+    var parts = fechaISO.split('-');
+    var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    targetYMD = toYMD(d);
+  } catch (e) {
+    return [];
+  }
+
+  var rows = [];
+  for (var i = 0; i < colLinea.length; i++) {
+    var lineaFila = (colLinea[i][0] + '').trim();
+    if (lineaFila !== linea) continue;
+
+    var fv = colFecha[i][0];
+    var ymd = '';
+    if (fv instanceof Date && !isNaN(fv)) {
+      ymd = toYMD(fv);
+    } else if (fv) {
+      var parsed = parsearFecha(String(fv));
+      if (parsed) ymd = toYMD(parsed);
+    }
+    if (ymd === targetYMD) {
+      rows.push(i + 2);
+    }
+  }
+  return rows;
+}
+
+/* ============================================
+   MODAL DE DETALLE CON OPCIÓN DE VENTANA
+   ============================================ */
+function mostrarDetalleLineaPorRow(rowNumber) {
+  const hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.HOJAS.SOLICITUDES);
+  const lastRow = hoja.getLastRow();
+  if (rowNumber < 2 || rowNumber > lastRow) {
+    SpreadsheetApp.getUi().alert('Número de fila inválido.');
+    return;
+  }
+
+  const lastCol = hoja.getLastColumn();
+  const encabezados = hoja.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const fila        = hoja.getRange(rowNumber, 1, 1, lastCol).getDisplayValues()[0];
+
+  const primerPagoAIDisplay = fila[CONFIG.INDICES.PRIMER_PAGO] || '';
+  const ultimoPagoAJDisplay = fila[CONFIG.INDICES.ULTIMO_PAGO] || '';
+
+  const html = HtmlService.createHtmlOutput(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="preload" href="https://fonts.googleapis.com/icon?family=Material+Icons" as="style" onload="this.onload=null;this.rel='stylesheet'">
+        <noscript><link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"></noscript>
+        <link rel="preload" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Poppins:wght@400;600;700&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+        <noscript><link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Poppins:wght@400;600;700&display=swap" rel="stylesheet"></noscript>
+        <style>${generarCSSModal()}</style>
+      </head>
+      <body>
+        ${construirHTMLLinea(encabezados, fila, rowNumber, primerPagoAIDisplay, ultimoPagoAJDisplay, true)}
+        <script>${generarJSModal(rowNumber)}</script>
+      </body>
+    </html>
+  `).setWidth(CONFIG.UI.MODAL_WIDTH).setHeight(CONFIG.UI.MODAL_HEIGHT);
+
+  SpreadsheetApp.getUi().showModalDialog(html, 'Detalles de Línea');
+}
+
+
+
+/* ============================================
+   GENERADORES DE CSS Y HTML
+   ============================================ */
+function generarCSSModal() {
+  return `
+    :root {
+      --primary: #4a6bff; --primary-light: #eef1ff; --primary-dark: #3a56cc; --secondary: #00c4cc;
+      --comic-yellow: #FFF9C4; --comic-black: #FFC400;
+      --error: #ff4757; --warning: #ffc107; --success: #2ed573; --text-dark: #2d3436;
+      --text-medium: #636e72; --text-light: #b2bec3; --bg-light: #f8fafc; --bg-card: #ffffff;
+      --border: #dfe6e9; --shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.1);
+      --radius: 16px; --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+    *{ box-sizing: border-box; margin: 0; padding: 0; font-family: 'Poppins','Roboto', sans-serif; }
+    body{ background-color: var(--bg-light); color: var(--text-dark); line-height: 1.6; padding: 24px; }
+  
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+      position: relative;
+      background: linear-gradient(135deg, #000000 0%, #5E1D4E 100%);
+      border: 4px solid #000;
+      border-radius: 20px;
+      box-shadow: var(--shadow-comic);
+      padding: 25px 20px;
+      animation: headerPop 0.6s ease-out;
+    }
+
+    .header::before {
+      content: "⚡";
+      position: absolute;
+      top: -15px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 24px;
+      background: #ffcc00;
+      border: 3px solid #000;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+    }
+    
+    .header h2 {
+      background: white;
+      padding: 18px 25px;
+      border: 4px solid #000;
+      border-radius: 10px;
+      display: inline-block;
+      position: relative;
+      box-shadow: 4px 4px 0 rgba(0,0,0,0.2);
+      margin-bottom: 20px;
+      font-size: 24px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .header .subtitle {
+      color: white;
+      font-size: 18px;
+    }
+    
+    .header .subtitle span {
+      color: #FFE100;
+      font-weight: 600;
+    }
+    .highlight{ font-weight:700; }
+    .card-group{ margin-bottom:40px; }
+    .group-header{ display:flex; align-items:center; margin-bottom:20px; padding-left:10px; }
+    .group-icon{
+      width:40px;height:40px;background:rgba(74,107,255,.1);border-radius:50%;display:flex;align-items:center;justify-content:center;margin-right:12px;
+    }
+    .group-icon i{ color:var(--primary); font-size:20px; }
+    .card-group h3{ font-weight:600; color:var(--text-dark); font-size:20px; }
+    .card-container{ display:grid; grid-template-columns: repeat(3,1fr); gap:20px; }
+    .info-card{
+      position:relative;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);transition:var(--transition);
+      z-index:1;border:none;min-height:140px;
+    }
+    .info-card:hover{ transform: translateY(-5px); box-shadow: 0 15px 30px -5px rgba(0,0,0,.15); }
+    .info-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 0 28px 28px 0;
+      border-color: transparent var(--comic-yellow) transparent transparent;
+      z-index: 1;
+    }
+
+    /* Patrón de medio tono sutil */
+    .info-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 50px;
+      height: 50px;
+      background-image: radial-gradient(circle, var(--comic-black) 1px, transparent 1px);
+      background-size: 6px 6px;
+      opacity: 0.05;
+      pointer-events: none;
+    }
+    .card-content{ padding:24px; position:relative; z-index:2; height:100%; display:flex; flex-direction:column; justify-content:center; }
+    .info-label{ font-size:16px; color:rgba(255,255,255,.85); margin-bottom:10px; font-weight:500; letter-spacing:.5px; text-transform:uppercase; }
+    .info-value{ font-size:15px; color:#fff; font-weight:600; word-break:break-word; line-height:1.4; }
+    .info-value.empty{ color:rgba(255,255,255,.7); font-style:italic; }
+    
+    .info-value.justified{ text-align: justify; }
+
+    .info-value.text-formatted {
+      text-align: left;
+      white-space: normal;
+      line-height: 1.0;
+    }
+    
+    .highlight-value{ font-size:22px; font-weight:700; }
+    .status-value{ font-weight:600; padding:4px 12px; border-radius:20px; display:inline-block; background:rgba(255,255,255,.15); }
+    .status-active{ color:#53EC00 !important; }
+    .vencimiento-lc{ color:#FF0000 !important; font-weight:bold; }
+    .vencimiento{ color:#FF0000 !important; font-weight:bold; }
+    .cliente-value{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; text-overflow:ellipsis; max-height:4.2em; }
+    .fecha-firma{ color:#00da4e !important; font-weight:700; }
+    .info-card.bg-cliente{ background: linear-gradient(135deg, #6b6b6b 0%, #000000 100%); }
+    .info-card.bg-solicitud{ background: linear-gradient(135deg, #000000 0%, #6b6b6b 100%); }
+    .info-card.regimen-pf{ background:#206E9E !important; }
+    .info-card.regimen-pf .info-label, .info-card.regimen-pf .info-value{ color:#fff !important; }
+
+    /* COLORES DINÁMICOS - Tipo Crédito Simple */
+    .info-card.tipo-credito-simple {
+      background: linear-gradient(135deg, #00b4d8 0%, #0077b6 100%) !important;
+      border: 2px solid #023e8a;
+    }
+    .info-card.tipo-credito-simple .info-label,
+    .info-card.tipo-credito-simple .info-value {
+      color: #fff !important;
+      font-weight: 700;
+    }
+    .info-card.tipo-credito-simple:hover {
+      box-shadow: 0 15px 30px -5px rgba(0, 119, 182, 0.4);
+    }
+
+    /* COLORES DINÁMICOS - Tipo Crédito Otros (Cuenta Corriente / Revolvente) */
+    .info-card.tipo-credito-otros {
+      background: linear-gradient(135deg, #ff6b6b 0%, #c92a2a 100%) !important;
+      border: 2px solid #a61e1e;
+    }
+    .info-card.tipo-credito-otros .info-label,
+    .info-card.tipo-credito-otros .info-value {
+      color: #fff !important;
+      font-weight: 700;
+    }
+    .info-card.tipo-credito-otros:hover {
+      box-shadow: 0 15px 30px -5px rgba(201, 42, 42, 0.4);
+    }
+
+     /* NUEVO COLOR PARA CONDICIONES (Columna J) */
+    .info-card.info-condiciones {
+      background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%) !important;
+      border: 3px solid #000;
+      padding: 20px; box-shadow: 6px 6px 0 rgba(0,0,0,0.15);
+    }
+    .info-card.info-condiciones .info-label {
+      color: #065AC2 !important;
+      font-weight: 700;
+    }
+    .info-card.info-condiciones .info-value {
+      margin-bottom: 10px; font-size: 14px; text-transform: uppercase;
+        display: flex; align-items: center; gap: 8px;
+        color: #414141 !important;
+    }
+    .info-card.info-condiciones:hover {
+      box-shadow: 0 15px 30px -5px rgba(124, 58, 237, 0.4);
+    }
+
+    .info-card.info-sensible{
+      background: linear-gradient(135deg, #ffb3ba 0%, #ffcccb 100%) !important;
+      border: 2px solid #ff9999;
+    }
+
+    .info-card.info-sensible{
+      background: linear-gradient(135deg, #ffb3ba 0%, #ffcccb 100%) !important;
+      border: 2px solid #ff9999;
+    }
+    .info-card.info-sensible .info-label{
+      color: #8b0000 !important;
+      font-weight: 700;
+    }
+    .info-card.info-sensible .info-value{
+      color: #000000 !important;
+      font-weight: 700;
+    }
+    .info-card.info-sensible:hover{
+      box-shadow: 0 15px 30px -5px rgba(255, 0, 0, 0.25);
+    }
+
+    .info-card.tarjeta-fecha{
+      background: linear-gradient(135deg, #ff9800 0%, #ffb74d 100%) !important;
+      border: 2px solid #fff3e0; 
+    }
+    .info-card.tarjeta-fecha .info-label, .info-card.tarjeta-fecha .info-value{ color:#000 !important; }
+    .info-card.tarjeta-fecha-pago{
+      background: #7117af; border: 2px solid #fff3e0;
+    }
+    .info-card.tarjeta-fecha-pago .info-label, .info-card.tarjeta-fecha-pago .info-value{ color:#fff !important; }
+
+    .button-container{ margin-top: 10px;text-align: center; }
+    .action-button{
+       display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 16px 24px;
+      border: 3px solid #000;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: #fff;
+      cursor: pointer;
+      box-shadow: var(--shadow-comic);
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      font-size: 16px;
+    }
+    .action-button:hover:not(.loading):not(.success):not(.error){ transform: translateY(-1px); box-shadow: var(--btn-shadow-hover); }
+    .action-button .icon{ font-size:20px; line-height:1; transition: transform .18s ease, opacity .18s ease; }
+    .button-text{
+      font-family:'Poppins','Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif; font-weight:700; letter-spacing:.35px; text-transform:uppercase;
+      color:#fff; text-shadow:0 1px 0 rgba(0,0,0,.15), 0 6px 12px rgba(0,0,0,.12); line-height:1;
+    }
+    .action-button.loading{ filter: saturate(.8) brightness(.95); cursor:progress; }
+    .action-button.loading .icon{ animation: spin 1s linear infinite; opacity:.9; }
+    @keyframes spin{ to{ transform: rotate(360deg);} }
+    .action-button.success{ background: linear-gradient(135deg, #22c55e, #16a34a); border-color: rgba(34,197,94,.35); box-shadow: 0 10px 24px rgba(34,197,94,.28); }
+    .action-button.error{ background: linear-gradient(135deg, #ef4444, #dc2626); border-color: rgba(239,68,68,.35); box-shadow: 0 10px 24px rgba(239,68,68,.28); }
+    .status-message{ margin-top:10px; font-size:13px; color:#555; }
+
+    @media (max-width: 768px){
+      .card-container{ grid-template-columns: 1fr; }
+      .info-card{ min-height: 120px; }
+    }
+  `;
+}
+
+function construirHTMLLinea(encabezados, fila, rowNumber, primerPagoAI, ultimoPagoAJ, mostrarBotonVentana) {
+  const idx = Object.create(null);
+  for (let i = 0; i < encabezados.length; i++) idx[encabezados[i]] = i;
+
+  let htmlContent = '';
+  
+  // Extraemos el número de línea para usarlo en las secciones
+  const numeroLinea = fila[CONFIG.INDICES.LINEA_CREDITO] ?? 'N/A';
+
+  // ========== BOTÓN ABRIR EN VENTANA (POSICIÓN FIJA MEJORADA) ==========
+  if (mostrarBotonVentana) {
+    htmlContent += `
+      <style>
+        /* Contenedor fijo para el botón */
+        #fixedButtonContainer {
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          height: 70px !important;
+          background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.95) 80%, transparent 100%);
+          backdrop-filter: blur(8px);
+          z-index: 999999 !important;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          padding: 0 20px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+        
+        /* Espaciador para evitar que el contenido quede detrás */
+        #contentSpacer {
+          height: 70px;
+          width: 100%;
+        }
+        
+        #openWindowBtn {
+          padding: 10px 18px;
+          border: none;
+          border-radius: 8px;
+          background: #2563eb;
+          color: white;
+          cursor: pointer;
+          font-weight: 600;
+          font-size: 14px;
+          transition: all 0.2s ease;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+          font-family: 'Poppins', 'Inter', sans-serif;
+          white-space: nowrap;
+          position: relative !important;
+        }
+        
+        #openWindowBtn:hover {
+          background: #1d4ed8;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 8px rgba(37, 99, 235, 0.4);
+        }
+        
+        #openWindowBtn:active {
+          transform: translateY(0);
+          box-shadow: 0 2px 4px rgba(37, 99, 235, 0.3);
+        }
+        
+        #openWindowBtn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+          transform: none;
+        }
+        
+        #openWindowBtn.loading {
+          background: #6b7280;
+        }
+        
+        .btn-icon {
+          width: 16px;
+          height: 16px;
+          flex-shrink: 0;
+        }
+        
+        #openWindowBtn.loading .btn-icon {
+          animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 600px) {
+          #fixedButtonContainer {
+            height: 60px !important;
+            padding: 0 15px;
+          }
+          
+          #contentSpacer {
+            height: 60px;
+          }
+          
+          #openWindowBtn {
+            padding: 8px 14px;
+            font-size: 12px;
+          }
+          
+          #openWindowBtn span:not(.btn-icon) {
+            display: none;
+          }
+        }
+      </style>
+      
+      <div id="fixedButtonContainer">
+        <button id="openWindowBtn" onclick="abrirEnNuevaVentana(${rowNumber})" title="Abrir en pestaña del navegador">
+          <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+          </svg>
+          <span>Abrir en pestaña nueva</span>
+        </button>
+      </div>
+      
+      <div id="contentSpacer"></div>
+      
+      <script>
+        function abrirEnNuevaVentana(rowNum) {
+          const btn = document.getElementById('openWindowBtn');
+          const icon = btn.querySelector('.btn-icon');
+          const text = btn.querySelector('span:not(.btn-icon)');
+          
+          btn.classList.add('loading');
+          btn.disabled = true;
+          btn.style.background = '#6b7280';
+          
+          // Cambiar a ícono de loading
+          icon.innerHTML = '<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"></circle><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"></path>';
+          if (text) text.textContent = 'Generando...';
+          
+          google.script.run
+            .withSuccessHandler(function(result) {
+              if (result && result.success) {
+                // Abrir en nueva pestaña
+                const w = window.open('about:blank', '_blank');
+                if (w) {
+                  w.document.open();
+                  w.document.write(result.html);
+                  w.document.close();
+                } else {
+                  alert('Por favor, permite ventanas emergentes para abrir la visualización');
+                }
+                
+                // Restaurar botón
+                btn.classList.remove('loading');
+                btn.disabled = false;
+                btn.style.background = '#2563eb';
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>';
+                if (text) text.textContent = 'Abrir en pestaña nueva';
+              } else {
+                alert('Error: ' + (result.message || 'No se pudo generar el contenido'));
+                restaurarBoton(btn, icon, text);
+              }
+            })
+            .withFailureHandler(function(error) {
+              alert('Error al abrir ventana: ' + error.message);
+              restaurarBoton(btn, icon, text);
+            })
+            .abrirEnVentanaCompleta(rowNum);
+        }
+        
+        function restaurarBoton(btn, icon, text) {
+          btn.classList.remove('loading');
+          btn.disabled = false;
+          btn.style.background = '#2563eb';
+          icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>';
+          if (text) text.textContent = 'Abrir en pestaña nueva';
+        }
+      </script>
+    `;
+  }
+
+  // ========== HEADER ==========
+  htmlContent += generarHTMLHeader(fila, idx);
+
+  // ========== INFORMACIÓN RELEVANTE (DESPUÉS DEL HEADER) ==========
+  const valorIRaw = fila[CONFIG.INDICES.INFO_RELEVANTE_I];
+  const valorGRaw = fila[CONFIG.INDICES.INFO_RELEVANTE_G];
+  const valorJRaw = fila[CONFIG.INDICES.INFO_RELEVANTE_J];
+  
+  let valorG = 'SIN DATOS';
+  let esVacioG = true;
+  if (valorGRaw !== null && valorGRaw !== undefined && String(valorGRaw).trim() !== '') {
+    valorG = String(valorGRaw).trim();
+    esVacioG = false;
+  }
+  
+  let valorI = 'N/A';
+  let esVacioI = true;
+  if (valorIRaw !== null && valorIRaw !== undefined && String(valorIRaw).trim() !== '') {
+    valorI = String(valorIRaw).trim();
+    esVacioI = false;
+  }
+
+  let valorJ = 'N/A';
+  let esVacioJ = true;
+  if (valorJRaw !== null && valorJRaw !== undefined && String(valorJRaw).trim() !== '') {
+    valorJ = String(valorJRaw).trim()
+      .replace(/\n/g, '<br>')  
+      .replace(/(\d+\.\s)/g, '<br>$1');  
+    esVacioJ = false;
+  }
+
+  const nombreI = encabezados[CONFIG.INDICES.INFO_RELEVANTE_I] || 'Información I';
+  const nombreG = encabezados[CONFIG.INDICES.INFO_RELEVANTE_G] || 'Información G';
+  const nombreJ = encabezados[CONFIG.INDICES.INFO_RELEVANTE_J] || 'Condiciones:';
+
+  htmlContent += `
+    <section class="card-group" style="margin-top: 20px;">
+      <div class="group-header">
+        <div class="group-icon"><i class="material-icons">warning</i></div>
+        <h3>Información Relevante <span style="font-size: 0.85em; color: var(--text-dark); margin-left: 8px; font-weight: normal;">| Línea: <span class="highlight">${numeroLinea}</span></span></h3>
+      </div>
+      
+      <div class="card-container" style="margin-bottom: 20px;">
+        <div class="info-card info-condiciones" style="grid-column: 1 / -1;">
+          <div class="card-content">
+            <div class="info-label">${nombreJ}</div>
+            <div class="info-value ${esVacioJ ? 'empty' : 'text-formatted'}">${valorJ}</div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="card-container">
+        <div class="info-card info-sensible" style="grid-column: 1 / -1;">
+          <div class="card-content">
+            <div class="info-label">${nombreI}</div>
+            <div class="info-value ${esVacioI ? 'empty' : 'justified'}">${valorI}</div>
+          </div>
+        </div>
+        <div class="info-card info-sensible" style="grid-column: 1 / -1;">
+          <div class="card-content">
+            <div class="info-label">${nombreG}</div>
+            <div class="info-value ${esVacioG ? 'empty' : 'justified'}">${valorG}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+
+  // ========== GENERAR GRUPOS DE TARJETAS ==========
+  for (const [nombreGrupo, configGrupo] of Object.entries(MAPEO_CAMPOS)) {
+    htmlContent += `
+      <section class="card-group">
+        <div class="group-header">
+          <div class="group-icon"><i class="material-icons">${configGrupo.icono}</i></div>
+          <h3>${nombreGrupo} <span style="font-size: 0.85em; color: var(--text-dark); margin-left: 8px; font-weight: normal;">| Línea: <span class="highlight">${numeroLinea}</span></span></h3>
+        </div>
+        <div class="card-container">
+    `;
+
+    // Campos del grupo
+    configGrupo.campos.forEach((nombre) => {
+      const i = idx[nombre];
+      if (i == null) return;
+      const raw = fila[i];
+      let formateado = (raw ?? 'N/A');
+
+      if (FORMATOS_CAMPOS[nombre]) formateado = FORMATOS_CAMPOS[nombre](raw);
+      else if (nombre === "Fecha de corte" && typeof formateado === "string" && /c\/m/i.test(formateado)) {
+        formateado = formateado.replace(/(\d+)\s*c\/m/gi, '$1 Cada Mes');
+      }
+
+      let claseEspecial = '';
+      let claseTarjetaExtra = configGrupo.claseTarjeta || '';
+      let claseValorExtra = '';
+
+      // Aplicar clase dinámica basada en el valor
+      const claseDinamica = obtenerClaseDinamica(nombre, raw);
+      if (claseDinamica) {
+        claseTarjetaExtra = claseDinamica;
+      }
+
+      if (nombre === "Monto" || nombre === "Tasa" || nombre === "LC") {
+        claseEspecial = 'highlight-value';
+      } else if (nombre === "Estatus") {
+        claseEspecial = 'status-value';
+        if (raw && String(raw).toLowerCase() === "activo") claseEspecial += ' status-active';
+      } else if (nombre === "Fecha Vencimiento LC") {
+        claseEspecial = 'vencimiento-lc';
+        if (!claseDinamica) claseTarjetaExtra += ' tarjeta-venc-lc';
+      } else if (nombre === "Fecha Vencimiento") {
+        claseEspecial = 'vencimiento';
+      }
+
+      // Solo aplica regimen-pf si NO hay clase dinámica
+      if (nombre === "Régimen Fiscal" && String(raw || '').trim().toUpperCase() === "PF" && !claseDinamica) {
+        claseTarjetaExtra += ' regimen-pf';
+      }
+      if (nombre === "Cliente") claseValorExtra += ' cliente-value';
+      if (nombre === "Fecha Firma") claseValorExtra += ' fecha-firma';
+
+      htmlContent += `
+        <div class="info-card ${claseTarjetaExtra}">
+          <div class="card-content">
+            <div class="info-label">${nombre}</div>
+            <div class="info-value ${!raw ? 'empty' : ''} ${claseEspecial} ${claseValorExtra}">${formateado}</div>
+          </div>
+        </div>
+      `;
+    });
+
+    // Tarjetas extras para "Datos de la Solicitud"
+    if (nombreGrupo === "Datos de la Solicitud") {
+      const valorAI = (primerPagoAI || '').toString().trim();
+      const textoAI = valorAI || 'N/A';
+      htmlContent += `
+        <div class="info-card tarjeta-fecha">
+          <div class="card-content">
+            <div class="info-label">Primer pago de interés</div>
+            <div class="info-value ${!valorAI ? 'empty' : ''} highlight-value">${textoAI}</div>
+          </div>
+        </div>
+      `;
+
+      const valorAJ = (ultimoPagoAJ || '').toString().trim();
+      const textoAJ = valorAJ || 'N/A';
+      htmlContent += `
+        <div class="info-card tarjeta-fecha-pago">
+          <div class="card-content">
+            <div class="info-label">Último pago Capital y/o interes</div>
+            <div class="info-value ${!valorAJ ? 'empty' : ''} highlight-value">${textoAJ}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    htmlContent += `</div></section>`;
+  }
+
+  // ========== BOTÓN VALIDAR ==========
+  htmlContent += `
+    <div class="button-container">
+      <button id="marcarCheckbox" class="action-button" onclick="marcarCheckbox(${rowNumber})">
+        <span class="icon material-icons">verified</span>
+        <span class="button-text">Validar Solicitud</span>
+        <span class="checkmark"></span>
+      </button>
+      <div id="buttonMessage" class="status-message"></div>
+    </div>
+  `;
+
+  return htmlContent;
+}
+
+function generarHTMLHeader(fila, idx) {
+  const idxIDOpp = idx["ID Oportunidad"];
+  let idOpp = 'N/A';
+  if (idxIDOpp != null) {
+    const idRaw = fila[idxIDOpp];
+    if (idRaw) {
+      const lineas = String(idRaw).split('\\n').filter(l => l.trim() !== '');
+      idOpp = lineas.length ? lineas[lineas.length - 1].trim() : 'N/A';
+    }
+  }
+
+  return `
+    <div class="header">
+      <h2><i class="material-icons" style="vertical-align: middle;">assignment</i> Detalle de Línea de Crédito</h2>
+      <p class="subtitle">Línea: <span class="highlight">${fila[CONFIG.INDICES.LINEA_CREDITO] ?? 'N/A'}</span> |
+        ID: <span class="highlight">${idOpp}</span>
+      </p>
+    </div>
+  `;
+}
+
+function generarJSModal(rowNumber) {
+  return `
+    async function marcarCheckbox(rowNumber) {
+      const button = document.getElementById('marcarCheckbox');
+      const buttonText = button.querySelector('.button-text');
+      const icon = button.querySelector('.icon');
+      const message = document.getElementById('buttonMessage');
+
+      button.classList.add('loading'); button.disabled = true;
+      icon.textContent = 'hourglass_top'; buttonText.textContent = 'Validando...';
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          button.classList.remove('loading');
+          if (result && result.success) {
+            button.classList.add('success');
+            icon.textContent = 'done';
+            buttonText.textContent = 'Validado';
+            message.innerHTML = '<span style="color:#4CAF50">✓ Validado correctamente</span>';
+          } else {
+            button.classList.add('error');
+            icon.textContent = 'error';
+            buttonText.textContent = 'Error';
+            message.innerHTML = '<span style="color:#F44336">✗ ' + (result && result.message ? result.message : 'Error') + '</span>';
+            setTimeout(function(){ resetButton(button, icon, buttonText, message); }, 3000);
+          }
+        })
+        .withFailureHandler(function(error) {
+          button.classList.remove('loading'); button.classList.add('error');
+          icon.textContent = 'error'; buttonText.textContent = 'Error';
+          message.innerHTML = '<span style="color:#F44336">✗ ' + error.message + '</span>';
+          setTimeout(function(){ resetButton(button, icon, buttonText, message); }, 3000);
+        })
+        .marcarCheckboxEnSheet(rowNumber);
+    }
+
+    function resetButton(button, icon, buttonText, message){
+      button.classList.remove('error');
+      icon.textContent='verified'; buttonText.textContent='Validar Solicitud';
+      message.textContent=''; button.disabled=false;
+    }
+  `;
+}
+
+/* ============================================
+   FUNCIÓN DE VALIDACIÓN
+   ============================================ */
+function marcarCheckboxEnSheet(rowNumber) {
+  const hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.HOJAS.SOLICITUDES);
+
+  try {
+    const estadoActual = hoja.getRange(rowNumber, CONFIG.COLUMNAS.CHECKBOX).getValue();
+    if (estadoActual === true) {
+      return { success: false, message: "Esta línea ya fue marcada previamente" };
+    }
+
+    hoja.getRange(rowNumber, CONFIG.COLUMNAS.CHECKBOX).setValue(true);
+    hoja.getRange(rowNumber, CONFIG.COLUMNAS.FECHA_VALIDACION).setValue(new Date());
+    hoja.getRange(rowNumber, CONFIG.COLUMNAS.COLOR_INDICADOR).setBackground('white');
+
+    return { success: true, message: "Línea marcada como revisada" };
+  } catch (error) {
+    Logger.log(error);
+    return { success: false, message: "Error al procesar: " + error.message };
+  }
+}
+
+/* ============================================
+   ABRIR EN PESTAÑA DEL NAVEGADOR
+   ============================================ */
+function abrirEnVentanaCompleta(rowNumber) {
+  const hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.HOJAS.SOLICITUDES);
+  const lastRow = hoja.getLastRow();
+  if (rowNumber < 2 || rowNumber > lastRow) {
+    return { success: false, message: 'Número de fila inválido.' };
+  }
+
+  const lastCol = hoja.getLastColumn();
+  const encabezados = hoja.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const fila = hoja.getRange(rowNumber, 1, 1, lastCol).getDisplayValues()[0];
+
+  const primerPagoAIDisplay = fila[CONFIG.INDICES.PRIMER_PAGO] || '';
+  const ultimoPagoAJDisplay = fila[CONFIG.INDICES.ULTIMO_PAGO] || '';
+
+  // Construir el HTML completo como string
+  const htmlCompleto = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Validación - Línea ${fila[CONFIG.INDICES.LINEA_CREDITO] ?? 'N/A'}</title>
+        <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+          ${generarCSSModal()}
+          
+          /* Ajustes para ventana completa */
+          body {
+            padding: 40px 60px;
+            max-width: 1800px;
+            margin: 0 auto;
+          }
+          
+          .container {
+            max-width: 100%;
+          }
+          
+          /* Mensaje informativo superior */
+          .info-banner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 20px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 9998;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            font-family: 'Poppins', sans-serif;
+          }
+          
+          .info-banner i {
+            vertical-align: middle;
+            margin-right: 8px;
+            font-size: 18px;
+          }
+          
+          /* Ajustar padding del body para el banner */
+          body {
+            padding-top: 80px;
+          }
+          
+          @media print {
+            .info-banner,
+            .button-container {
+              display: none !important;
+            }
+            
+            body {
+              padding-top: 20px;
+            }
+          }
+          
+          @media (max-width: 768px) {
+            body {
+              padding: 60px 20px 20px 20px;
+            }
+            
+            .info-banner {
+              padding: 10px 15px;
+              font-size: 12px;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <!-- Banner informativo (opcional) -->
+        <div class="info-banner">
+          <i class="material-icons">info</i>
+          <span>Vista de solo lectura • La validación debe hacerse desde Google Sheets</span>
+        </div>
+        
+        ${construirHTMLLinea(encabezados, fila, rowNumber, primerPagoAIDisplay, ultimoPagoAJDisplay, false)}
+        
+        <script>
+          // Nota: La función marcarCheckbox no funcionará aquí
+          function marcarCheckbox(rowNumber) {
+            alert('La validación solo está disponible desde el modal dentro de Google Sheets.\\n\\nEsta ventana es solo para visualización e impresión.');
+          }
+          
+          // Permitir imprimir con Ctrl+P
+          document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
+              e.preventDefault();
+              window.print();
+            }
+          });
+          
+          // Cerrar con ESC (opcional)
+          document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+              if (confirm('¿Cerrar esta ventana?')) {
+                window.close();
+              }
+            }
+          });
+        </script>
+      </body>
+    </html>
+  `;
+
+  return {
+    success: true,
+    html: htmlCompleto
+  };
+}
